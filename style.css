@@ -4,7 +4,13 @@
   --bg:#F3F1EC; --panel:#FBFAF7; --ink:#2F2E2B; --ink2:#7E7B74; --ink3:#B5B1A8;
   --line:#DEDAD2; --land:#E2DED6; --landEdge:#F3F1EC; --accent:#D9774A;
   --h1:#D4A08A; --h2:#CDB98A; --h3:#93B3AB;
-  --r:10px;
+  --r:10px; --field:#fff; --chip:#E9E6DF;
+}
+/* Night sky: same structure, deep blue-black, pastel light */
+body.night{
+  --bg:#06080D; --panel:#090C14; --ink:#ECE8E0; --ink2:#8C93A4; --ink3:#495062;
+  --line:#1C2130; --land:#10141F; --landEdge:#1A2030; --accent:#F6AE7E;
+  --field:#121725; --chip:#141926;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
@@ -95,12 +101,12 @@ main{flex:1;display:flex;min-height:0;position:relative;margin:0 12px;border-rad
 #yearJump:focus{border-bottom:1px solid var(--accent)}
 #yearJump.bad,.ym input.bad{border-color:#C0634A!important;color:#C0634A}
 .readout b{color:var(--ink);font-weight:500}
-#timeline{width:100%;height:96px;display:block;cursor:pointer;touch-action:none}
+#timeline{width:100%;height:104px;display:block;cursor:pointer;touch-action:none}
 body.m-timeline #timeline{height:240px}
 .axis text{fill:var(--ink2);font-size:10px}
 .axis line{stroke:var(--line)}
 .band{rx:4}
-.bandLabel{font-size:11px;fill:var(--ink);pointer-events:none;font-weight:500}
+.bandLabel{font-size:11px;pointer-events:none;font-weight:500}
 .tick{cursor:pointer}
 .tick.future{opacity:.25}
 .mk{fill:var(--ink)}
@@ -161,6 +167,41 @@ body.m-timeline #timeline{height:240px}
 .sub-list{grid-column:1/-1;border-top:1px dashed var(--line);padding-top:8px}
 .sub-list .card{background:var(--panel)}
 .search{width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 9px;margin-bottom:10px;background:#fff}
+
+/* light trails canvas sits above the map, below the controls */
+#trails{position:absolute;left:0;top:0;pointer-events:none}
+/* overlap glow: faint routes that build up where trips repeat */
+.layer-arcs{isolation:isolate}
+.arc{mix-blend-mode:multiply}
+body.night .arc{mix-blend-mode:screen;opacity:.3;stroke-width:1.2px}
+body.night .arc.recent{opacity:1}
+body.night .move{stroke:#C9CEDA;opacity:.5}
+/* night sky */
+.stars{display:none}
+body.night .stars{display:inline}
+body.night .stars circle{fill:#DCE3F2;opacity:.12;animation:twinkle 6s ease-in-out infinite}
+@keyframes twinkle{0%,100%{opacity:.06}50%{opacity:.5}}
+body.night .sphere{fill:transparent}
+body.night main{background:radial-gradient(ellipse at 50% 40%,#0D1220 0%,#06080D 75%)}
+body.night .land{fill:var(--land);stroke:var(--landEdge)}
+body.night .dest{filter:url(#starglow);stroke:none;animation:starPulse 5s ease-in-out infinite}
+@keyframes starPulse{0%,100%{opacity:.75}50%{opacity:1}}
+body.night .dest.sel{stroke:var(--ink);stroke-width:1px}
+body.night .home .core{filter:url(#starglow);stroke:none}
+body.night .moment{fill:#ECE8E0}
+body.night .modes{background:var(--chip)}
+body.night .modes button.on{background:#1A2030;box-shadow:none}
+body.night .pl.hl{background:#121827}
+body.night .media .ph,body.night .poster-off{background:repeating-linear-gradient(45deg,#121827 0 6px,#0F1420 6px 12px)}
+body.night .posterStage{background:#0F131D}
+body.night .placeLabel,body.night .cityLabel{stroke:#06080D}
+body.night .zoomBtns button{background:var(--panel)}
+body.night #editor{box-shadow:-10px 0 40px rgba(0,0,0,.5)}
+.card,.fld input,.fld textarea,.sm,.search,.ym select,.printControls select,.printControls input{background:var(--field)}
+body.night #editor .tabs button.on{background:var(--chip)}
+.bandLabel{fill:#24262B}
+/* the poster is always a light print, whatever the screen theme */
+.poster{--ink:#2F2E2B;--ink2:#7E7B74;--ink3:#B5B1A8;--line:#DEDAD2}
 
 @media (max-width:760px){
   .bar{padding:10px 16px 6px}

@@ -6,7 +6,9 @@
 
 const WORLD = 'lib/countries-50m.json';
 const STORE = 'lifemap.data.v1';
-const COLORS = ['#D4A08A', '#CDB98A', '#93B3AB', '#A9B4CF', '#C3A9C4', '#B8C49A'];
+const DAY_COLORS = ['#D4A08A', '#CDB98A', '#93B3AB', '#A9B4CF', '#C3A9C4', '#B8C49A'];
+const NIGHT_COLORS = ['#F4B79E', '#EED7A0', '#A3DDD0', '#B9C6F2', '#E1BDE6', '#CFE3A6'];   // same hues, lifted to glow on black
+const TRAIL_FADE = 1.5;   // seconds for a light trail to fade to ~37%
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const ZOOM_CITIES = 3, ZOOM_PLACES = 6;
 const PAPER = { a3p:[297,420], a3l:[420,297], a4p:[210,297], p1824:[457.2,609.6], letterl:[279.4,215.9] };
@@ -23,7 +25,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&l
 const ease = d3.easeCubicInOut;
 const geoLine = (a, b) => ({ type: 'LineString', coordinates: [[+a.lng, +a.lat], [+b.lng, +b.lat]] });
 
-const S = { data: null, base: null, mode: 'map', t: NOW_M, attract: false, tf: NOW_M, hold: 0, playing: false, sel: null, visit: 0,
+const S = { data: null, base: null, mode: 'map', theme: 'day', t: NOW_M, attract: false, tf: NOW_M, hold: 0, playing: false, sel: null, visit: 0,
             k: 1, zt: d3.zoomIdentity, land: null, expanded: new Set(), etab: 'trips', efilter: '' };
 let D = null;
 
@@ -33,7 +35,8 @@ function derive() {
   const birth = ym(d.profile.birth || d.homes[0]?.start || '1980-01');
   const homes = d.homes.filter(h => h.start).map(h => ({ ...h, src: h, startM: ym(h.start), endM: h.end ? ym(h.end) : NOW_M }))
     .sort((a, b) => a.startM - b.startM);
-  homes.forEach((h, i) => h.color = COLORS[i % COLORS.length]);
+  const pal = S.theme === 'night' ? NIGHT_COLORS : DAY_COLORS;
+  homes.forEach((h, i) => { h.color = pal[i % pal.length]; h.dayColor = DAY_COLORS[i % DAY_COLORS.length]; });
   const homeAt = m => { let r = homes[0]; for (const h of homes) if (h.startM <= m) r = h; return r; };
   const trips = d.trips.filter(t => t.start && isFinite(+t.lat) && isFinite(+t.lng) && t.city)
     .map(t => { const m = ym(t.start); return { ...t, src: t, m, home: homeAt(m), key: slug(`${t.city}-${t.country}`) }; })
@@ -96,8 +99,19 @@ function buildMap(onlyIfResized) {
   if (!W || !H) return;
   clearFlights();
   svg.attr('viewBox', `0 0 ${W} ${H}`).selectAll('*').remove();
-  const f = svg.append('defs').append('filter').attr('id', 'glow').attr('x', '-100%').attr('y', '-100%').attr('width', '300%').attr('height', '300%');
+  const defs = svg.append('defs');
+  const f = defs.append('filter').attr('id', 'glow').attr('x', '-100%').attr('y', '-100%').attr('width', '300%').attr('height', '300%');
   f.append('feGaussianBlur').attr('stdDeviation', 3);
+  const sg = defs.append('filter').attr('id', 'starglow').attr('x', '-200%').attr('y', '-200%').attr('width', '500%').attr('height', '500%');
+  sg.append('feGaussianBlur').attr('in', 'SourceGraphic').attr('stdDeviation', 2.2).attr('result', 'b');
+  const mg = sg.append('feMerge'); mg.append('feMergeNode').attr('in', 'b'); mg.append('feMergeNode').attr('in', 'b'); mg.append('feMergeNode').attr('in', 'SourceGraphic');
+  // night sky: a fixed field of faint background stars (screen space, seeded so it never jumps)
+  const rnd = d3.randomLcg(42), stars = svg.append('g').attr('class', 'stars');
+  for (let i = 0; i < Math.round(W * H / 2600); i++) {
+    stars.append('circle').attr('cx', rnd() * W).attr('cy', rnd() * H).attr('r', .35 + rnd() * .75)
+      .style('animation-delay', `${(-rnd() * 7).toFixed(2)}s`).style('animation-duration', `${(4 + rnd() * 6).toFixed(2)}s`);
+  }
+  sizeTrails();
   proj = d3.geoNaturalEarth1().fitExtent([[16, 16], [W - 16, H - 16]], S.fitLand);
   gpath = d3.geoPath(proj);
   gRoot = svg.append('g');
@@ -111,8 +125,10 @@ function buildMap(onlyIfResized) {
   L.moves.selectAll('path').data(D.moves).join('path').attr('class', 'move').attr('d', d => gpath(geoLine(d.from, d.to)));
 
   const P = d => proj([+d.lng, +d.lat]);
+  const tw = d3.randomLcg(7);
   L.dests.selectAll('circle').data(D.dests, d => d.key).join('circle').attr('class', 'dest')
     .attr('cx', d => P(d)[0]).attr('cy', d => P(d)[1])
+    .style('animation-delay', () => `${(-tw() * 6).toFixed(2)}s`)
     .on('mouseenter', (e, d) => tip(e, `<b>${esc(d.city)}</b>, ${esc(d.country)} · ${d.trips.length} visit${d.trips.length > 1 ? 's' : ''}`))
     .on('mousemove', moveTip).on('mouseleave', hideTip)
     .on('click', (e, d) => { e.stopPropagation(); select({ type: 'dest', key: d.key }, true); });
@@ -147,7 +163,7 @@ function buildMap(onlyIfResized) {
   you.append('circle').attr('class', 'core');
 
   zoom = d3.zoom().scaleExtent([1, 1200]).translateExtent([[0, 0], [W, H]])
-    .on('zoom', e => { S.zt = e.transform; S.k = e.transform.k; gRoot.attr('transform', e.transform); applyScale(); });
+    .on('zoom', e => { S.zt = e.transform; S.k = e.transform.k; gRoot.attr('transform', e.transform); applyScale(); clearTrails(); });
   svg.call(zoom).on('click', () => { if (S.sel) select(null); });
   svg.call(zoom.transform, S.zt);
   update();
@@ -168,6 +184,8 @@ function applyScale() {
   L.labels.selectAll('text').style('font-size', (11.5 / k) + 'px').attr('dx', 8 / k).attr('dy', -6 / k).style('stroke-width', 3 / k);
   L.you.select('.halo').attr('r', 11 / k);
   L.you.select('.core').attr('r', 4.5 / k);
+  svg.select('#glow feGaussianBlur').attr('stdDeviation', 3 / k);
+  svg.select('#starglow feGaussianBlur').attr('stdDeviation', 2.2 / k);
   const w = $('#mapWrap');
   w.classList.toggle('zoomed', k >= ZOOM_CITIES);
   L.places.style('display', k >= ZOOM_PLACES ? null : 'none');
@@ -266,7 +284,7 @@ function buildTimeline(onlyIfResized) {
     .on('mousemove', moveTip).on('mouseleave', hideTip);
   TL.mk.each(function (d, i) {
     const g = d3.select(this), x = tx(d.m + .5);
-    const y = big ? 16 + (i % 2) * 16 : bandY + bandH / 2;
+    const y = big ? 16 + (i % 2) * 16 : bandY + bandH + 6;
     if (big) g.append('line').attr('x1', x).attr('x2', x).attr('y1', y).attr('y2', bandY).attr('stroke', 'var(--line)');
     g.append('rect').attr('class', 'mk').attr('width', 7).attr('height', 7)
       .attr('transform', `translate(${x},${y - 5}) rotate(45)`).attr('fill', big ? 'var(--ink)' : 'var(--panel)')
@@ -369,6 +387,9 @@ function tickFlights(dt) {
     f.sel.classed('drawing', true).style('stroke-dasharray', `${f.len} ${f.len}`).style('stroke-dashoffset', f.len * (1 - reveal));
     const pt = f.el.getPointAtLength(f.len * pos);
     f.g.attr('transform', `translate(${pt.x},${pt.y})`);
+    const sp = S.zt.apply([pt.x, pt.y]);
+    if (f.prev && Math.hypot(sp[0] - f.prev[0], sp[1] - f.prev[1]) < 200) trailSeg(f.prev, sp, f.isMove ? (S.theme === 'night' ? '#E9E6DF' : '#2F2E2B') : f.ev.trip.home.color, f.isMove);
+    f.prev = sp;
     f.g.select('.halo').attr('r', 10 / k);
     f.g.select('.core').attr('r', 3.6 / k);
     if (!f.isMove && !f.arrived && p >= .5) { f.arrived = true; flash(f.ev.trip); }
@@ -381,6 +402,58 @@ function endFlight(f) {
   f.g.remove();
 }
 function clearFlights() { flights.forEach(endFlight); flights = []; }
+
+/* Light trails: a canvas over the map that is never cleared outright. Each frame the comets
+   paint a short glowing segment and the whole canvas fades a little, like a long exposure. */
+const trailCv = document.getElementById('trails');
+const tctx = trailCv.getContext('2d');
+let trailUntil = 0, trailLast = 0, trailRaf = 0;
+function sizeTrails() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  trailCv.width = Math.round(W * dpr); trailCv.height = Math.round(H * dpr);
+  trailCv.style.width = W + 'px'; trailCv.style.height = H + 'px';
+  tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+function clearTrails() { tctx.save(); tctx.setTransform(1, 0, 0, 1, 0, 0); tctx.clearRect(0, 0, trailCv.width, trailCv.height); tctx.restore(); }
+function trailSeg(a, b, color, isMove) {
+  const night = S.theme === 'night';
+  tctx.save();
+  tctx.globalCompositeOperation = night ? 'lighter' : 'source-over';
+  tctx.lineCap = 'round';
+  tctx.strokeStyle = color; tctx.shadowColor = color;
+  tctx.shadowBlur = night ? 16 : 6;
+  tctx.globalAlpha = night ? .85 : .55;
+  tctx.lineWidth = isMove ? 2.6 : 2.1;
+  tctx.beginPath(); tctx.moveTo(a[0], a[1]); tctx.lineTo(b[0], b[1]); tctx.stroke();
+  tctx.restore();
+  trailUntil = performance.now() + TRAIL_FADE * 4000;
+  if (!trailRaf) { trailLast = performance.now(); trailRaf = requestAnimationFrame(fadeTrails); }
+}
+function fadeTrails(ts) {
+  const dt = Math.min(.1, (ts - trailLast) / 1000); trailLast = ts;
+  tctx.save();
+  tctx.setTransform(1, 0, 0, 1, 0, 0);
+  tctx.globalCompositeOperation = 'destination-out';
+  tctx.fillStyle = `rgba(0,0,0,${(1 - Math.exp(-dt / TRAIL_FADE)).toFixed(4)})`;
+  tctx.fillRect(0, 0, trailCv.width, trailCv.height);
+  tctx.restore();
+  if (ts < trailUntil) trailRaf = requestAnimationFrame(fadeTrails);
+  else { clearTrails(); trailRaf = 0; }
+}
+
+/* Day / Night sky */
+function setTheme(t, rebuild = true) {
+  S.theme = t === 'night' ? 'night' : 'day';
+  document.body.classList.toggle('night', S.theme === 'night');
+  const b = $('#themeBtn');
+  b.textContent = S.theme === 'night' ? 'Daylight' : 'Night sky';
+  b.setAttribute('aria-pressed', S.theme === 'night');
+  try { localStorage.setItem('pushlife.theme', S.theme); } catch (e) {}
+  if (!rebuild) return;
+  clearTrails(); derive(); renderHeader();
+  if (S.mode === 'print') renderPoster(); else { buildTimeline(); buildMap(); renderDetail(); }
+  writeHash();
+}
 
 /* The home view runs as an ambient loop until someone interacts; the first interaction
    stops it and resets the timeline to the start. */
@@ -485,13 +558,15 @@ function writeHash() {
   const p = new URLSearchParams();
   p.set('mode', S.mode);
   if (S.t < D.end) p.set('t', ymStr(S.t));
+  if (S.theme === 'night') p.set('theme', 'night');
   if (S.sel) p.set('sel', S.sel.type === 'dest' ? 'place:' + S.sel.key : 'home:' + S.sel.id);
   if (S.sel?.place) p.set('spot', slug(S.sel.place));
   try { history.replaceState(null, '', '#' + p.toString()); } catch (e) {}
 }
-function readHash() {
-  const p = new URLSearchParams(location.hash.slice(1));
+function readHash(hash = location.hash) {
+  const p = new URLSearchParams(hash.slice(1));
   const m = p.get('mode'); if (['timeline', 'map', 'locations', 'print'].includes(m)) S.mode = m;
+  if (p.get('theme')) S.theme = p.get('theme') === 'night' ? 'night' : 'day';
   const t = p.get('t'); if (t && /^\d{4}-\d{2}$/.test(t)) S.t = Math.max(D.birth, Math.min(D.end, ym(t)));
   const s = p.get('sel');
   if (s) {
@@ -507,7 +582,8 @@ function readHash() {
 /* ---------- modes ---------- */
 function setMode(m) {
   S.mode = m;
-  document.body.className = 'm-' + m;
+  document.body.classList.remove('m-map', 'm-timeline', 'm-locations', 'm-print');
+  document.body.classList.add('m-' + m);
   document.querySelectorAll('.modes button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
   const pr = m === 'print';
   $('#print').hidden = !pr; $('#stage').hidden = pr; $('#timeWrap').hidden = pr; $('#stats').hidden = pr;
@@ -551,15 +627,15 @@ function posterMap(s, w, h, locs) {
   s.append('path').datum(S.land).attr('d', pa).attr('fill', '#E6E2DA').attr('stroke', '#FBFAF7').attr('stroke-width', .5);
   if (!locs) {
     s.append('g').selectAll('path').data(D.trips).join('path').attr('d', d => pa(geoLine(d.home, d)))
-      .attr('fill', 'none').attr('stroke', d => d.home.color).attr('stroke-width', 1).attr('opacity', .7);
+      .attr('fill', 'none').attr('stroke', d => d.home.dayColor).attr('stroke-width', 1).attr('opacity', .7);
     s.append('g').selectAll('path').data(D.moves).join('path').attr('d', d => pa(geoLine(d.from, d.to)))
       .attr('fill', 'none').attr('stroke', '#2F2E2B').attr('stroke-width', 1.4).attr('stroke-dasharray', '3 4');
   }
   s.append('g').selectAll('circle').data(D.dests).join('circle')
     .attr('transform', d => `translate(${pr([d.lng, d.lat])})`).attr('r', d => locs ? 2 + Math.sqrt(d.trips.length) * 2.4 : 2)
-    .attr('fill', d => d.trips[d.trips.length - 1].home.color).attr('stroke', '#FBFAF7').attr('stroke-width', .6);
+    .attr('fill', d => d.trips[d.trips.length - 1].home.dayColor).attr('stroke', '#FBFAF7').attr('stroke-width', .6);
   s.append('g').selectAll('circle').data(D.homes).join('circle')
-    .attr('transform', d => `translate(${pr([d.lng, d.lat])})`).attr('r', 5).attr('fill', d => d.color).attr('stroke', '#2F2E2B').attr('stroke-width', 1.2);
+    .attr('transform', d => `translate(${pr([d.lng, d.lat])})`).attr('r', 5).attr('fill', d => d.dayColor).attr('stroke', '#2F2E2B').attr('stroke-width', 1.2);
   const lab = locs ? [...D.dests].sort((a, b) => b.trips.length - a.trips.length).slice(0, 12) : [];
   s.append('g').selectAll('text').data([...D.homes, ...lab]).join('text')
     .attr('transform', d => `translate(${pr([d.lng, d.lat])})`).attr('dx', 7).attr('dy', -6)
@@ -569,12 +645,12 @@ function posterTimeline(s, w, h) {
   const x = d3.scaleLinear([D.birth, D.end + 1], [10, w - 10]);
   const mid = h * .62, bh = 26;
   s.append('g').selectAll('rect').data(D.homes).join('rect').attr('x', d => x(d.startM)).attr('width', d => x(d.endM + 1) - x(d.startM) - 1)
-    .attr('y', mid).attr('height', bh).attr('rx', 4).attr('fill', d => d.color);
+    .attr('y', mid).attr('height', bh).attr('rx', 4).attr('fill', d => d.dayColor);
   s.append('g').selectAll('text').data(D.homes).join('text').attr('x', d => x(d.startM) + 8).attr('y', mid + 17).attr('font-size', 12).attr('fill', '#2F2E2B').text(d => d.city);
   const per = {};
   s.append('g').selectAll('circle').data(D.trips).join('circle').attr('cx', d => x(d.m + .5))
     .attr('cy', d => { const y = Math.floor(d.m / 12); per[y] = (per[y] ?? -1) + 1; return mid - 10 - per[y] * 10; })
-    .attr('r', 3.6).attr('fill', d => d.home.color);
+    .attr('r', 3.6).attr('fill', d => d.home.dayColor);
   const ax = s.append('g');
   for (let y = Math.ceil(D.birth / 60) * 5; y * 12 <= D.end; y += 5) {
     ax.append('text').attr('x', x(y * 12)).attr('y', mid + bh + 20).attr('text-anchor', 'middle').attr('font-size', 10).attr('fill', '#7E7B74').text(y);
@@ -811,6 +887,8 @@ async function init() {
   S.base = base;
   let local = null; try { local = JSON.parse(localStorage.getItem(STORE)); } catch (e) {}
   S.data = local && local.homes ? local : JSON.parse(JSON.stringify(base));
+  try { S.theme = localStorage.getItem('pushlife.theme') === 'night' ? 'night' : 'day'; } catch (e) {}
+  { const th = new URLSearchParams(location.hash.slice(1)).get('theme'); if (th) S.theme = th === 'night' ? 'night' : 'day'; }
   derive();
   S.t = D.end;
   const hp = new URLSearchParams(location.hash.slice(1));
@@ -833,6 +911,8 @@ async function init() {
     catch (e) { prompt('Copy this link', location.href); }
   };
   $('#editBtn').onclick = () => { $('#editor').hidden = false; renderEditor(); };
+  setTheme(S.theme, false);
+  $('#themeBtn').onclick = () => setTheme(S.theme === 'night' ? 'day' : 'night');
   ['#pVisual', '#pSize', '#pTitle'].forEach(s => $(s).addEventListener('input', renderPoster));
   $('#printBtn').onclick = () => window.print();
   // first interaction ends the ambient loop and resets to the start
@@ -885,9 +965,12 @@ async function init() {
   focusSel();
   // a deep link pasted into the same tab only changes the hash: apply it without a reload
   addEventListener('hashchange', () => {
-    S.attract = false; if (S.playing) pause(); clearFlights();
+    const hash = location.hash;   // read before pause() rewrites it
+    S.attract = false; if (S.playing) { S.playing = false; $('#playBtn').textContent = '▶'; } clearFlights();
     S.sel = null; S.t = D.end; S.zt = d3.zoomIdentity;
-    readHash(); syncTime(); setMode(S.mode); focusSel();
+    const th = S.theme; readHash(hash); syncTime();
+    if (th !== S.theme) { setTheme(S.theme, false); derive(); renderHeader(); }
+    setMode(S.mode); focusSel();
   });
 }
 window.__pushlife = { S, get D() { return D; } };   // read-only hook for QA scripts

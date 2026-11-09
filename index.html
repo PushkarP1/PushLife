@@ -23,6 +23,7 @@
       <button data-mode="print" role="tab">Print</button>
     </nav>
     <div class="tools">
+      <button id="themeBtn" class="ghost" aria-pressed="false">Night sky</button>
       <button id="shareBtn" class="ghost">Share link</button>
       <button id="editBtn" class="ghost">Edit data</button>
     </div>
@@ -33,6 +34,7 @@
   <main id="stage">
     <div id="mapWrap">
       <svg id="map"></svg>
+      <canvas id="trails" aria-hidden="true"></canvas>
       <div class="zoomBtns">
         <button data-z="in" aria-label="Zoom in">+</button>
         <button data-z="out" aria-label="Zoom out">−</button>
