@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PushLife</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header class="bar">
+    <div class="brand">
+      <div class="title" id="title">PushLife</div>
+      <div class="sub" id="subtitle"></div>
+    </div>
+    <nav class="modes" role="tablist">
+      <button data-mode="timeline" role="tab">Timeline</button>
+      <button data-mode="map" role="tab">Map</button>
+      <button data-mode="locations" role="tab">Locations</button>
+      <button data-mode="print" role="tab">Print</button>
+    </nav>
+    <div class="tools">
+      <button id="shareBtn" class="ghost">Share link</button>
+      <button id="editBtn" class="ghost">Edit data</button>
+    </div>
+  </header>
+
+  <section class="stats" id="stats"></section>
+
+  <main id="stage">
+    <div id="mapWrap">
+      <svg id="map"></svg>
+      <div class="zoomBtns">
+        <button data-z="in" aria-label="Zoom in">+</button>
+        <button data-z="out" aria-label="Zoom out">−</button>
+        <button data-z="fit" aria-label="Fit world">⤢</button>
+      </div>
+      <div class="nowLabel" id="nowLabel"></div>
+    </div>
+    <aside id="detail" hidden></aside>
+  </main>
+
+  <footer id="timeWrap">
+    <div class="transport">
+      <button id="playBtn" class="play" aria-label="Play">▶</button>
+      <div class="readout" id="readout"></div>
+    </div>
+    <svg id="timeline"></svg>
+  </footer>
+
+  <section id="print" hidden>
+    <div class="printControls">
+      <label>Visual
+        <select id="pVisual">
+          <option value="map">Journey map</option>
+          <option value="timeline">Timeline</option>
+          <option value="locations">Locations</option>
+        </select>
+      </label>
+      <label>Paper
+        <select id="pSize">
+          <option value="a3p">A3 portrait</option>
+          <option value="a3l">A3 landscape</option>
+          <option value="a4p">A4 portrait</option>
+          <option value="p1824">18 × 24 in portrait</option>
+          <option value="letterl">Letter landscape</option>
+        </select>
+      </label>
+      <label>Title <input id="pTitle" type="text"></label>
+      <button id="printBtn" class="primary">Print / save PDF</button>
+    </div>
+    <div class="posterStage" id="posterStage"><div class="poster" id="poster"></div></div>
+  </section>
+
+  <div id="tip" class="tip" hidden></div>
+  <aside id="editor" hidden></aside>
+</div>
+
+<script src="lib/d3.min.js"></script>
+<script src="lib/topojson-client.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
