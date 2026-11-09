@@ -8,6 +8,7 @@ const WORLD = 'lib/countries-50m.json';
 const STORE = 'lifemap.data.v1';
 const DAY_COLORS = ['#D4A08A', '#CDB98A', '#93B3AB', '#A9B4CF', '#C3A9C4', '#B8C49A'];
 const NIGHT_COLORS = ['#F4B79E', '#EED7A0', '#A3DDD0', '#B9C6F2', '#E1BDE6', '#CFE3A6'];   // same hues, lifted to glow on black
+const THEME_KEY = 'pushlife.theme.v2';
 const TRAIL_FADE = 1.5;   // seconds for a light trail to fade to ~37%
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const ZOOM_CITIES = 3, ZOOM_PLACES = 6;
@@ -23,9 +24,17 @@ const slug = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '
   .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const ease = d3.easeCubicInOut;
+// Moves bow upward as a smooth planar arc, so long hops (e.g. Dubai to Vancouver) never wrap over the pole.
+const bowArc = (pr, a, b) => {
+  const p = pr([+a.lng, +a.lat]), q = pr([+b.lng, +b.lat]);
+  const mx = (p[0] + q[0]) / 2, my = (p[1] + q[1]) / 2, dx = q[0] - p[0], dy = q[1] - p[1];
+  let nx = -dy, ny = dx; if (ny > 0) { nx = -nx; ny = -ny; }
+  const f = 0.22;
+  return `M${p[0]},${p[1]}Q${mx + nx * f},${my + ny * f} ${q[0]},${q[1]}`;
+};
 const geoLine = (a, b) => ({ type: 'LineString', coordinates: [[+a.lng, +a.lat], [+b.lng, +b.lat]] });
 
-const S = { data: null, base: null, mode: 'map', theme: 'day', t: NOW_M, attract: false, tf: NOW_M, hold: 0, playing: false, sel: null, visit: 0,
+const S = { data: null, base: null, mode: 'map', theme: 'night', t: NOW_M, attract: false, tf: NOW_M, hold: 0, playing: false, sel: null, visit: 0,
             k: 1, zt: d3.zoomIdentity, land: null, expanded: new Set(), etab: 'trips', efilter: '' };
 let D = null;
 
@@ -68,8 +77,9 @@ function derive() {
   const moments = (d.moments || []).filter(x => x.date).map(x => ({ ...x, src: x, m: ym(x.date) })).sort((a, b) => a.m - b.m);
   const events = [...trips.map(t => ({ type: 'trip', m: t.m, trip: t })), ...moves.map(v => ({ type: 'move', m: v.m, move: v }))]
     .sort((a, b) => a.m - b.m || (a.type === 'move' ? -1 : 1));
-  const km = trips.reduce((s, t) => s + 2 * d3.geoDistance([t.home.lng, t.home.lat], [t.lng, t.lat]) * 6371, 0)
-    + moves.reduce((s, v) => s + d3.geoDistance([v.from.lng, v.from.lat], [v.to.lng, v.to.lat]) * 6371, 0);
+  trips.forEach(t => t.km = 2 * d3.geoDistance([+t.home.lng, +t.home.lat], [+t.lng, +t.lat]) * 6371);
+  moves.forEach(v => v.km = d3.geoDistance([+v.from.lng, +v.from.lat], [+v.to.lng, +v.to.lat]) * 6371);
+  const km = trips.reduce((s, t) => s + t.km, 0) + moves.reduce((s, v) => s + v.km, 0);
   const countries = new Set([...homes.map(h => h.country), ...trips.map(t => t.country)].filter(Boolean));
   D = { birth, end: NOW_M, homes, homeAt, trips, dests, moves, moments, events, km, countries };
 }
@@ -77,15 +87,29 @@ function derive() {
 function saveLocal() { try { localStorage.setItem(STORE, JSON.stringify(S.data)); } catch (e) {} }
 
 /* ---------- stats + header ---------- */
+let lastStats = '';
 function renderHeader() {
+  lastStats = '';
   const p = S.data.profile;
   $('#subtitle').textContent = `${p.name || ''} · ${Math.floor(D.birth / 12)} to ${now.getFullYear()} · ${D.homes.map(h => h.city).join(' → ')}`;
-  const years = Math.floor((D.end - D.birth) / 12);
-  const st = [[years, 'Years'], [D.homes.length, 'Homes'], [D.countries.size, 'Countries'],
-    [D.dests.length + D.homes.length, 'Cities'], [D.trips.length, 'Trips'], [d3.format(',')(Math.round(D.km / 1000) * 1000), 'km travelled']];
-  $('#stats').innerHTML = st.map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('') +
+  $('#stats').innerHTML = ['Years', 'Homes', 'Countries', 'Cities', 'Trips', 'km travelled'].map(l => `<div class="stat"><b></b><span>${l}</span></div>`).join('') +
     `<div class="legend">${D.homes.map(h => `<span><i style="background:${h.color}"></i>${esc(h.city)}</span>`).join('')}
      <span><i style="background:var(--ink);border-radius:1px;transform:rotate(45deg) scale(.8)"></i>Key moment</span></div>`;
+}
+
+/* Stats follow the playhead: everything counted up to the month on screen. */
+function updateStats() {
+  if (!D) return;
+  const t = S.t;
+  const hs = D.homes.filter(h => h.startM <= t), ts = D.trips.filter(x => x.m <= t);
+  const countries = new Set([...hs.map(h => h.country), ...ts.map(x => x.country)].filter(Boolean)).size;
+  const cities = new Set([...hs.map(h => slug(`${h.city}-${h.country}`)), ...ts.map(x => x.key)]).size;
+  const km = ts.reduce((s, x) => s + x.km, 0) + D.moves.filter(v => v.m <= t).reduce((s, v) => s + v.km, 0);
+  const vals = [Math.max(0, Math.floor((t - D.birth) / 12)), hs.length, countries, cities, ts.length, d3.format(',')(Math.round(km / 100) * 100)];
+  const key = vals.join('|');
+  if (key === lastStats) return;
+  lastStats = key;
+  document.querySelectorAll('#stats .stat b').forEach((b, i) => { if (b.textContent !== String(vals[i])) b.textContent = vals[i]; });
 }
 
 /* ---------- map ---------- */
@@ -122,7 +146,7 @@ function buildMap(onlyIfResized) {
 
   L.arcs.selectAll('path').data(D.trips, d => d.id).join('path').attr('class', 'arc')
     .attr('stroke', d => d.home.color).attr('d', d => gpath(geoLine(d.home, d)));
-  L.moves.selectAll('path').data(D.moves).join('path').attr('class', 'move').attr('d', d => gpath(geoLine(d.from, d.to)));
+  L.moves.selectAll('path').data(D.moves).join('path').attr('class', 'move').attr('stroke', d => d.to.color).attr('d', d => bowArc(proj, d.from, d.to));
 
   const P = d => proj([+d.lng, +d.lat]);
   const tw = d3.randomLcg(7);
@@ -215,6 +239,7 @@ function update() {
   applyScale();
   updateTimeline();
   readout();
+  updateStats();
 }
 
 function flash(d) {
@@ -372,7 +397,7 @@ function launch(ev) {
   const len = el.getTotalLength(); if (!len) return;
   const g = L.fx.append('g').attr('class', 'comet');
   g.append('circle').attr('class', 'halo');
-  g.append('circle').attr('class', 'core').attr('fill', isMove ? 'var(--ink)' : ev.trip.home.color);
+  g.append('circle').attr('class', 'core').attr('fill', isMove ? ev.move.to.color : ev.trip.home.color);
   flights.push({ ev, sel, el, len, g, p: 0, dur: isMove ? 3.4 : 2.0, isMove });
 }
 function tickFlights(dt) {
@@ -388,7 +413,7 @@ function tickFlights(dt) {
     const pt = f.el.getPointAtLength(f.len * pos);
     f.g.attr('transform', `translate(${pt.x},${pt.y})`);
     const sp = S.zt.apply([pt.x, pt.y]);
-    if (f.prev && Math.hypot(sp[0] - f.prev[0], sp[1] - f.prev[1]) < 200) trailSeg(f.prev, sp, f.isMove ? (S.theme === 'night' ? '#E9E6DF' : '#2F2E2B') : f.ev.trip.home.color, f.isMove);
+    if (f.prev && Math.hypot(sp[0] - f.prev[0], sp[1] - f.prev[1]) < 200) trailSeg(f.prev, sp, f.isMove ? f.ev.move.to.color : f.ev.trip.home.color, f.isMove);
     f.prev = sp;
     f.g.select('.halo').attr('r', 10 / k);
     f.g.select('.core').attr('r', 3.6 / k);
@@ -446,9 +471,9 @@ function setTheme(t, rebuild = true) {
   S.theme = t === 'night' ? 'night' : 'day';
   document.body.classList.toggle('night', S.theme === 'night');
   const b = $('#themeBtn');
-  b.textContent = S.theme === 'night' ? 'Daylight' : 'Night sky';
-  b.setAttribute('aria-pressed', S.theme === 'night');
-  try { localStorage.setItem('pushlife.theme', S.theme); } catch (e) {}
+  b.setAttribute('aria-checked', S.theme === 'night');
+  b.setAttribute('aria-label', S.theme === 'night' ? 'Night sky on. Switch to daylight' : 'Daylight on. Switch to night sky');
+  try { localStorage.setItem(THEME_KEY, S.theme); } catch (e) {}
   if (!rebuild) return;
   clearTrails(); derive(); renderHeader();
   if (S.mode === 'print') renderPoster(); else { buildTimeline(); buildMap(); renderDetail(); }
@@ -558,7 +583,7 @@ function writeHash() {
   const p = new URLSearchParams();
   p.set('mode', S.mode);
   if (S.t < D.end) p.set('t', ymStr(S.t));
-  if (S.theme === 'night') p.set('theme', 'night');
+  p.set('theme', S.theme);
   if (S.sel) p.set('sel', S.sel.type === 'dest' ? 'place:' + S.sel.key : 'home:' + S.sel.id);
   if (S.sel?.place) p.set('spot', slug(S.sel.place));
   try { history.replaceState(null, '', '#' + p.toString()); } catch (e) {}
@@ -628,8 +653,8 @@ function posterMap(s, w, h, locs) {
   if (!locs) {
     s.append('g').selectAll('path').data(D.trips).join('path').attr('d', d => pa(geoLine(d.home, d)))
       .attr('fill', 'none').attr('stroke', d => d.home.dayColor).attr('stroke-width', 1).attr('opacity', .7);
-    s.append('g').selectAll('path').data(D.moves).join('path').attr('d', d => pa(geoLine(d.from, d.to)))
-      .attr('fill', 'none').attr('stroke', '#2F2E2B').attr('stroke-width', 1.4).attr('stroke-dasharray', '3 4');
+    s.append('g').selectAll('path').data(D.moves).join('path').attr('d', d => bowArc(pr, d.from, d.to))
+      .attr('fill', 'none').attr('stroke', d => d.to.dayColor).attr('stroke-width', 1.6);
   }
   s.append('g').selectAll('circle').data(D.dests).join('circle')
     .attr('transform', d => `translate(${pr([d.lng, d.lat])})`).attr('r', d => locs ? 2 + Math.sqrt(d.trips.length) * 2.4 : 2)
@@ -887,7 +912,8 @@ async function init() {
   S.base = base;
   let local = null; try { local = JSON.parse(localStorage.getItem(STORE)); } catch (e) {}
   S.data = local && local.homes ? local : JSON.parse(JSON.stringify(base));
-  try { S.theme = localStorage.getItem('pushlife.theme') === 'night' ? 'night' : 'day'; } catch (e) {}
+  S.theme = 'night';   // night sky is the default look
+  try { if (localStorage.getItem(THEME_KEY) === 'day') S.theme = 'day'; } catch (e) {}
   { const th = new URLSearchParams(location.hash.slice(1)).get('theme'); if (th) S.theme = th === 'night' ? 'night' : 'day'; }
   derive();
   S.t = D.end;
@@ -904,13 +930,24 @@ async function init() {
     if (z === 'fit') svg.transition().duration(700).call(zoom.transform, d3.zoomIdentity);
     else svg.transition().duration(300).call(zoom.scaleBy, z === 'in' ? 2 : .5);
   });
+  // settings menu: the gear toggles; Print, Edit and Share unfurl below it
+  const settings = $('#settings'), menuBtns = [...document.querySelectorAll('#settingsMenu .iconbtn')];
+  const setMenu = open => {
+    settings.classList.toggle('open', open);
+    $('#gearBtn').setAttribute('aria-expanded', open);
+    $('#settingsMenu').setAttribute('aria-hidden', !open);
+    menuBtns.forEach(b => b.tabIndex = open ? 0 : -1);
+  };
+  $('#gearBtn').onclick = () => setMenu(!settings.classList.contains('open'));
+  addEventListener('keydown', e => { if (e.key === 'Escape' && settings.classList.contains('open') && $('#editor').hidden) { setMenu(false); $('#gearBtn').focus(); } });
+  $('#printBtnM').onclick = () => { setMenu(false); setMode('print'); };
   $('#shareBtn').onclick = async () => {
     writeHash();
     const b = $('#shareBtn');
-    try { await navigator.clipboard.writeText(location.href); b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Share link', 1500); }
+    try { await navigator.clipboard.writeText(location.href); b.classList.add('done'); b.title = 'Link copied'; setTimeout(() => { b.classList.remove('done'); b.title = 'Copy share link'; }, 1600); }
     catch (e) { prompt('Copy this link', location.href); }
   };
-  $('#editBtn').onclick = () => { $('#editor').hidden = false; renderEditor(); };
+  $('#editBtn').onclick = () => { setMenu(false); $('#editor').hidden = false; renderEditor(); };
   setTheme(S.theme, false);
   $('#themeBtn').onclick = () => setTheme(S.theme === 'night' ? 'day' : 'night');
   ['#pVisual', '#pSize', '#pTitle'].forEach(s => $(s).addEventListener('input', renderPoster));

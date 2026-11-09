@@ -26,7 +26,7 @@ button{cursor:pointer}
 .modes{display:flex;background:#E9E6DF;border-radius:999px;padding:3px}
 .modes button{border:0;background:transparent;padding:7px 16px;border-radius:999px;color:var(--ink2);font-weight:500}
 .modes button.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-.tools{display:flex;gap:6px}
+
 .ghost{border:1px solid var(--line);background:transparent;padding:6px 12px;border-radius:999px;color:var(--ink2)}
 .ghost:hover{color:var(--ink);border-color:var(--ink3)}
 .primary{border:0;background:var(--ink);color:var(--panel);padding:9px 16px;border-radius:999px;font-weight:500}
@@ -46,7 +46,7 @@ main{flex:1;display:flex;min-height:0;position:relative;margin:0 12px;border-rad
 .arc{fill:none;stroke-width:1.1px;vector-effect:non-scaling-stroke;stroke-linecap:round;opacity:.35}
 .arc.recent{opacity:.95;stroke-width:1.6px}
 .arc.drawing{opacity:1;stroke-width:1.8px}
-.move{fill:none;stroke:var(--ink);stroke-width:1.4px;stroke-dasharray:3 4;vector-effect:non-scaling-stroke;opacity:.55}
+.move{fill:none;stroke-width:1.6px;vector-effect:non-scaling-stroke;stroke-linecap:round;opacity:.6}
 .dest{stroke:var(--panel);stroke-width:1px;vector-effect:non-scaling-stroke;cursor:pointer;opacity:.9}
 .dest:hover,.dest.sel{stroke:var(--ink);stroke-width:1.5px}
 .home .ring{fill:none;stroke-width:1.5px;vector-effect:non-scaling-stroke}
@@ -175,7 +175,7 @@ body.m-timeline #timeline{height:240px}
 .arc{mix-blend-mode:multiply}
 body.night .arc{mix-blend-mode:screen;opacity:.3;stroke-width:1.2px}
 body.night .arc.recent{opacity:1}
-body.night .move{stroke:#C9CEDA;opacity:.5}
+body.night .move{opacity:.7;mix-blend-mode:screen}
 /* night sky */
 .stars{display:none}
 body.night .stars{display:inline}
@@ -202,6 +202,43 @@ body.night #editor .tabs button.on{background:var(--chip)}
 .bandLabel{fill:#24262B}
 /* the poster is always a light print, whatever the screen theme */
 .poster{--ink:#2F2E2B;--ink2:#7E7B74;--ink3:#B5B1A8;--line:#DEDAD2}
+
+/* compact flat day/night switch */
+.tools{display:flex;gap:10px;align-items:center}
+.switch{position:relative;width:54px;height:28px;border-radius:999px;border:1px solid var(--line);background:var(--chip);padding:0;flex:none;transition:background .35s ease,border-color .35s ease}
+.switch .knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--panel);box-shadow:0 1px 2px rgba(0,0,0,.18);transform:translateX(26px);transition:transform .4s cubic-bezier(.34,1.4,.64,1),background .35s}
+.switch .ico{position:absolute;top:50%;width:15px;height:15px;margin-top:-7.5px;transition:opacity .3s,transform .4s cubic-bezier(.34,1.4,.64,1)}
+.switch .sun{left:7px}
+.switch .moon{right:7px;opacity:0;transform:scale(.4) rotate(-40deg)}
+.switch svg{width:100%;height:100%;display:block;fill:none;stroke:#E2A84B;stroke-width:2;stroke-linecap:round}
+.switch .sun circle{fill:#E2A84B;stroke:none}
+.switch .moon .fill{fill:#F0C46A;stroke:none}
+body.night .switch{background:#1A2030;border-color:#262D40}
+body.night .switch .knob{transform:none;background:#D9D6CF}
+body.night .switch .sun{opacity:0;transform:scale(.4) rotate(40deg)}
+body.night .switch .moon{opacity:1;transform:none}
+.switch:focus-visible,.iconbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* settings: gear with icons that unfurl below it and fold back up into it */
+.settings{position:relative;width:34px;height:34px;flex:none}
+.iconbtn{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--ink2);display:flex;align-items:center;justify-content:center;padding:0;transition:color .2s,border-color .2s,background .2s}
+.iconbtn:hover{color:var(--ink);border-color:var(--ink3)}
+.iconbtn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.gear{position:relative;z-index:2}
+.gear svg{transition:transform .6s cubic-bezier(.34,1.3,.64,1)}
+.settings.open .gear{color:var(--ink);border-color:var(--ink3)}
+.settings.open .gear svg{transform:rotate(120deg)}
+.menu{position:absolute;top:0;left:0;width:34px;z-index:1;pointer-events:none}
+.menu .iconbtn{position:absolute;left:0;top:0;opacity:0;transform:translateY(0) scale(.55) rotate(-90deg);
+  transition:transform .32s cubic-bezier(.55,0,.75,.4),opacity .22s ease;transition-delay:calc((2 - var(--i)) * 45ms);box-shadow:0 4px 14px rgba(0,0,0,.08)}
+.settings.open .menu{pointer-events:auto}
+.settings.open .menu .iconbtn{opacity:1;transform:translateY(calc((var(--i) + 1) * 42px)) scale(1) rotate(0);
+  transition:transform .55s cubic-bezier(.34,1.56,.64,1),opacity .25s ease;transition-delay:calc(var(--i) * 60ms)}
+#shareBtn .a,#shareBtn .b{display:flex;transition:opacity .2s,transform .3s cubic-bezier(.34,1.56,.64,1)}
+#shareBtn .b{position:absolute;opacity:0;transform:scale(.4);color:var(--accent)}
+#shareBtn.done .a{opacity:0;transform:scale(.4)}
+#shareBtn.done .b{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.menu .iconbtn,.gear svg,.switch .knob,.switch .ico{transition-duration:.01s!important;transition-delay:0s!important}}
 
 @media (max-width:760px){
   .bar{padding:10px 16px 6px}
