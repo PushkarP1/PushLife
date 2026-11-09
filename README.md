@@ -1,4 +1,5 @@
-# PushLife (wireframe)
+# PushLife
+https://pushkarp1.github.io/PushLife
 
 Personal data visualization of homes and travels: Timeline, Map, Locations and Print modes driven by one `data.json`.
 
