@@ -8,7 +8,6 @@ const WORLD = 'lib/countries-50m.json';
 const STORE = 'lifemap.data.v1';
 const COLORS = ['#D4A08A', '#CDB98A', '#93B3AB', '#A9B4CF', '#C3A9C4', '#B8C49A'];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const YEARS_PER_SEC = 1.2;          // timeline playback speed
 const ZOOM_CITIES = 3, ZOOM_PLACES = 6;
 const PAPER = { a3p:[297,420], a3l:[420,297], a4p:[210,297], p1824:[457.2,609.6], letterl:[279.4,215.9] };
 
@@ -24,8 +23,8 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&l
 const ease = d3.easeCubicInOut;
 const geoLine = (a, b) => ({ type: 'LineString', coordinates: [[+a.lng, +a.lat], [+b.lng, +b.lat]] });
 
-const S = { data: null, base: null, mode: 'timeline', t: NOW_M, playing: false, sel: null, visit: 0,
-            k: 1, zt: d3.zoomIdentity, ev: { i: 0, p: 0 }, land: null, expanded: new Set(), etab: 'trips', efilter: '' };
+const S = { data: null, base: null, mode: 'map', t: NOW_M, attract: false, tf: NOW_M, hold: 0, playing: false, sel: null, visit: 0,
+            k: 1, zt: d3.zoomIdentity, land: null, expanded: new Set(), etab: 'trips', efilter: '' };
 let D = null;
 
 /* ---------- data ---------- */
@@ -49,7 +48,16 @@ function derive() {
   dests.forEach(x => {
     x.first = x.trips[0].m;
     const seen = new Map();
-    x.trips.forEach(t => (t.places || []).forEach(p => { if (p.name && !seen.has(p.name)) seen.set(p.name, { ...p, trip: t }); }));
+    x.trips.forEach(t => (t.places || []).forEach(p => {
+      if (!p.name) return;
+      const q = seen.get(p.name);
+      if (!q) { seen.set(p.name, { ...p, media: [...(p.media || [])], trip: t }); return; }
+      if (p.note && !(q.note || '').includes(p.note)) q.note = q.note ? `${q.note}\n${p.note}` : p.note;
+      // real media first, placeholders only if nothing real exists
+      q.media = [...q.media, ...(p.media || [])];
+      const real = q.media.filter(m => m.url);
+      if (real.length) q.media = real;
+    }));
     x.places = [...seen.values()];
   });
   const moves = [];
@@ -86,6 +94,7 @@ function buildMap(onlyIfResized) {
   if (onlyIfResized && gRoot && el.clientWidth === W && el.clientHeight === H) return;
   W = el.clientWidth; H = el.clientHeight;
   if (!W || !H) return;
+  clearFlights();
   svg.attr('viewBox', `0 0 ${W} ${H}`).selectAll('*').remove();
   const f = svg.append('defs').append('filter').attr('id', 'glow').attr('x', '-100%').attr('y', '-100%').attr('width', '300%').attr('height', '300%');
   f.append('feGaussianBlur').attr('stdDeviation', 3);
@@ -183,7 +192,7 @@ function update() {
   const cur = D.homeAt(t);
   L.homes.selectAll('g.home').style('display', d => d.startM <= t ? null : 'none').classed('active', d => d === cur);
   L.moments.selectAll('rect').style('display', d => d.m <= t ? null : 'none');
-  if (!(S.playing && S.mode === 'map') && cur) moveYou(...proj([cur.lng, cur.lat]));
+  if (cur) moveYou(...proj([cur.lng, cur.lat]));
   L.you.style('display', loc ? 'none' : null);
   applyScale();
   updateTimeline();
@@ -240,7 +249,7 @@ function buildTimeline(onlyIfResized) {
   const perYear = {};
   const tg = tsvg.append('g');
   TL.ticks = tg.selectAll('g').data(D.trips).join('g').attr('class', 'tick')
-    .on('pointerdown', (e, d) => { e.stopPropagation(); pause(); S.t = d.m; syncEvent(); select({ type: 'dest', key: d.key }, true); update(); writeHash(); })
+    .on('pointerdown', (e, d) => { e.stopPropagation(); pause(); S.t = d.m; syncTime(); select({ type: 'dest', key: d.key }, true); update(); writeHash(); })
     .on('mouseenter', (e, d) => tip(e, `<b>${esc(d.city)}</b>, ${esc(d.country)} · ${fmtM(d.m)}`))
     .on('mousemove', moveTip).on('mouseleave', hideTip);
   TL.ticks.each(function (d) {
@@ -269,7 +278,7 @@ function buildTimeline(onlyIfResized) {
   TL.ph.append('line').attr('y1', 4).attr('y2', axisY);
   TL.ph.append('circle').attr('cy', 4).attr('r', 4);
 
-  const scrub = e => { const r = el.getBoundingClientRect(); S.t = Math.round(Math.max(D.birth, Math.min(D.end, tx.invert((e.clientX - r.left) * TW / r.width)))); syncEvent(); update(); };
+  const scrub = e => { const r = el.getBoundingClientRect(); S.t = Math.round(Math.max(D.birth, Math.min(D.end, tx.invert((e.clientX - r.left) * TW / r.width)))); syncTime(); update(); };
   tsvg.on('pointerdown', e => { pause(); el.setPointerCapture(e.pointerId); scrub(e);
     tsvg.on('pointermove', scrub).on('pointerup pointercancel', () => { tsvg.on('pointermove', null).on('pointerup pointercancel', null); writeHash(); }); });
   updateTimeline();
@@ -285,62 +294,103 @@ function updateTimeline() {
 function readout() {
   const t = S.t, h = D.homeAt(t), n = D.trips.filter(x => x.m <= t).length;
   const living = h && t >= h.startM ? `Living in <b>${esc(h.city)}</b>` : '';
-  $('#readout').innerHTML = `<b>${fmtM(t)}</b> · ${living} · ${n} trip${n === 1 ? '' : 's'} so far`;
+  $('#rdMonth').textContent = MONTHS[t % 12];
+  const yj = $('#yearJump');
+  if (document.activeElement !== yj) { yj.value = Math.floor(t / 12); yj.classList.remove('bad'); }
+  $('#readout').innerHTML = [living, `${n} trip${n === 1 ? '' : 's'} so far`].filter(Boolean).join(' · ');
   $('#nowLabel').innerHTML = `<b>${Math.floor(t / 12)}</b>${h ? esc(h.city) : ''}`;
 }
 
-/* ---------- playback ---------- */
-let last = 0;
-function syncEvent() { const i = D.events.findIndex(e => e.m > S.t); S.ev = { i: i < 0 ? D.events.length : i, p: 0 }; }
+/* ---------- playback ----------
+   Time runs continuously. Each trip or move launches a "flight": a glowing comet that travels
+   its arc (out and back for trips) while the arc draws in behind it. */
+const SPEED = { map: 0.55, timeline: 1.2 };   // years per second
+const LOOP_HOLD = 4;                           // seconds to rest on "now" before looping
+let last = 0, flights = [];
+function syncTime() { S.tf = S.t; S.hold = 0; }
 function play() {
   if (S.mode === 'print') return;
-  if (S.t >= D.end) { S.t = D.birth; S.ev = { i: 0, p: 0 }; } else syncEvent();
   if (S.mode === 'locations') setMode('map');
-  S.playing = true; last = performance.now(); $('#playBtn').textContent = '❚❚';
+  if (S.t >= D.end) S.t = D.birth;
+  syncTime();
+  S.playing = true; last = performance.now(); $('#playBtn').textContent = '❚❚'; $('#playBtn').setAttribute('aria-label', 'Pause');
+  update();
   requestAnimationFrame(loop);
 }
 function pause() {
   if (!S.playing) return;
-  S.playing = false; $('#playBtn').textContent = '▶';
-  L.arcs?.selectAll('path').classed('drawing', false).style('stroke-dasharray', null).style('stroke-dashoffset', null);
-  L.moves?.selectAll('path').style('stroke-dasharray', null).style('stroke-dashoffset', null);
+  S.playing = false; $('#playBtn').textContent = '▶'; $('#playBtn').setAttribute('aria-label', 'Play');
+  clearFlights();
   update(); writeHash();
 }
 function loop(ts) {
   if (!S.playing) return;
   const dt = Math.min(0.1, (ts - last) / 1000); last = ts;
-  if (S.mode === 'map') stepMap(dt); else stepLinear(dt);
+  stepTime(dt);
+  tickFlights(dt);
   if (S.playing) requestAnimationFrame(loop);
 }
-function stepLinear(dt) {
+function stepTime(dt) {
+  if (S.t >= D.end) {
+    if (!S.attract) { if (!flights.length) pause(); return; }
+    S.hold += dt;
+    if (S.hold >= LOOP_HOLD) { clearFlights(); S.t = D.birth; syncTime(); update(); }
+    return;
+  }
   const prev = S.t;
-  S.tf = (S.tf && Math.floor(S.tf) === prev ? S.tf : prev) + dt * 12 * YEARS_PER_SEC;
-  S.t = Math.min(D.end, Math.floor(S.tf));
-  if (S.t !== prev) { D.trips.forEach(d => { if (d.m > prev && d.m <= S.t) flash(d); }); update(); }
-  if (S.t >= D.end) { S.t = D.end; pause(); }
+  S.tf += dt * 12 * (SPEED[S.mode] || 1);
+  const nt = Math.min(D.end, Math.floor(S.tf));
+  if (nt !== prev) {
+    S.t = nt;
+    D.events.forEach(e => { if (e.m > prev && e.m <= nt) launch(e); });
+    update();
+  }
 }
-function stepMap(dt) {
-  const ev = D.events[S.ev.i];
-  if (!ev) { S.t = D.end; pause(); return; }
-  const dur = ev.type === 'move' ? 2.6 : 1.15;
-  S.ev.p += dt / dur;
-  const p = Math.min(1, S.ev.p);
-  if (S.t !== ev.m) { S.t = ev.m; update(); }
-  const sel = ev.type === 'trip' ? L.arcs.selectAll('path').filter(d => d === ev.trip) : L.moves.selectAll('path').filter(d => d === ev.move);
-  const el = sel.node();
-  if (el) {
-    const len = el.getTotalLength();
-    let f, reveal;
-    if (ev.type === 'move') { f = ease(p); reveal = f; }
-    else { f = p < .45 ? ease(p / .45) : p < .55 ? 1 : 1 - ease((p - .55) / .45); reveal = Math.min(1, p / .45); }
-    sel.classed('drawing', true).style('stroke-dasharray', `${len} ${len}`).style('stroke-dashoffset', len * (1 - reveal));
-    if (len > 0) { const pt = el.getPointAtLength(len * f); moveYou(pt.x, pt.y); }
+function launch(ev) {
+  if (!gRoot || S.mode === 'locations') return;
+  const isMove = ev.type === 'move';
+  const sel = isMove ? L.moves.selectAll('path').filter(d => d === ev.move) : L.arcs.selectAll('path').filter(d => d === ev.trip);
+  const el = sel.node(); if (!el) return;
+  const len = el.getTotalLength(); if (!len) return;
+  const g = L.fx.append('g').attr('class', 'comet');
+  g.append('circle').attr('class', 'halo');
+  g.append('circle').attr('class', 'core').attr('fill', isMove ? 'var(--ink)' : ev.trip.home.color);
+  flights.push({ ev, sel, el, len, g, p: 0, dur: isMove ? 3.4 : 2.0, isMove });
+}
+function tickFlights(dt) {
+  if (!flights.length) return;
+  const k = S.k;
+  for (const f of flights) {
+    f.p += dt / f.dur;
+    const p = Math.min(1, f.p);
+    let pos, reveal;
+    if (f.isMove) { pos = ease(p); reveal = pos; }
+    else { pos = p < .5 ? ease(p / .5) : 1 - ease((p - .5) / .5); reveal = Math.min(1, p / .5); }
+    f.sel.classed('drawing', true).style('stroke-dasharray', `${f.len} ${f.len}`).style('stroke-dashoffset', f.len * (1 - reveal));
+    const pt = f.el.getPointAtLength(f.len * pos);
+    f.g.attr('transform', `translate(${pt.x},${pt.y})`);
+    f.g.select('.halo').attr('r', 10 / k);
+    f.g.select('.core').attr('r', 3.6 / k);
+    if (!f.isMove && !f.arrived && p >= .5) { f.arrived = true; flash(f.ev.trip); }
+    if (f.p >= 1) { endFlight(f); f.done = true; }
   }
-  if (S.ev.p >= 1) {
-    sel.classed('drawing', false).style('stroke-dasharray', null).style('stroke-dashoffset', null);
-    if (ev.type === 'trip') flash(ev.trip);
-    S.ev.i++; S.ev.p = 0;
-  }
+  flights = flights.filter(f => !f.done);
+}
+function endFlight(f) {
+  f.sel.classed('drawing', false).style('stroke-dasharray', null).style('stroke-dashoffset', null);
+  f.g.remove();
+}
+function clearFlights() { flights.forEach(endFlight); flights = []; }
+
+/* The home view runs as an ambient loop until someone interacts; the first interaction
+   stops it and resets the timeline to the start. */
+function stopAttract() {
+  if (!S.attract) return;
+  S.attract = false;
+  if (S.playing) { S.playing = false; $('#playBtn').textContent = '▶'; $('#playBtn').setAttribute('aria-label', 'Play'); }
+  clearFlights();
+  S.t = D.birth; syncTime();
+  update(); writeHash();
 }
 
 /* ---------- details on demand ---------- */
@@ -559,39 +609,113 @@ function fld(label, obj, prop, opts = {}) {
   i.value = opts.get ? opts.get(obj) : (obj[prop] ?? '');
   i.addEventListener('change', () => {
     if (opts.set) opts.set(obj, i.value); else obj[prop] = opts.type === 'number' ? (i.value === '' ? '' : +i.value) : i.value;
-    commit(); if (opts.rerender) renderEditor();
+    commit(); if (opts.rerender) refreshHeaders();
   });
   w.appendChild(i); return w;
 }
 function btn(text, fn, cls = 'sm') { const b = document.createElement('button'); b.className = cls; b.textContent = text; b.type = 'button'; b.onclick = fn; return b; }
-async function geocode(obj, q) {
+async function geocode(obj, q, button) {
+  const set = (lat, lng) => { obj.lat = +(+lat).toFixed(4); obj.lng = +(+lng).toFixed(4); commit(); renderEditor(); };
+  if (button) { button.disabled = true; button.textContent = 'Finding…'; }
   try {
     const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
-    const j = await r.json();
-    if (j[0]) { obj.lat = +(+j[0].lat).toFixed(4); obj.lng = +(+j[0].lon).toFixed(4); commit(); renderEditor(); }
-    else alert('No match found for "' + q + '"');
-  } catch (e) { alert('Location lookup failed. You can type the coordinates instead.'); }
+    const j = r.ok ? await r.json() : [];
+    if (j[0]) return set(j[0].lat, j[0].lon);
+  } catch (e) {}
+  try {   // fallback: Open-Meteo geocoder (city names only)
+    const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(q.split(',')[0].trim())}`);
+    const j = r.ok ? await r.json() : {};
+    if (j.results?.[0]) return set(j.results[0].latitude, j.results[0].longitude);
+  } catch (e) {}
+  if (button) { button.disabled = false; button.textContent = 'Find coordinates'; }
+  alert(`Couldn't find "${q}". You can type the latitude and longitude instead.`);
 }
 function coordRow(bd, obj, q) {
   bd.append(fld('Latitude', obj, 'lat', { type: 'number', step: 'any' }), fld('Longitude', obj, 'lng', { type: 'number', step: 'any' }));
   const r = document.createElement('div'); r.className = 'full';
-  r.appendChild(btn('Find coordinates', () => geocode(obj, q())));
+  const b = btn('Find coordinates', () => geocode(obj, q(), b)); r.appendChild(b);
   bd.appendChild(r);
 }
+let headers = [];
 function card(id, title, date, build) {
   const c = document.createElement('div'); c.className = 'card';
   const hd = document.createElement('div'); hd.className = 'hd';
-  hd.innerHTML = `<span class="t">${esc(title)}</span><span class="d">${esc(date)}</span><span class="muted">${S.expanded.has(id) ? '▾' : '▸'}</span>`;
-  hd.onclick = () => { S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderEditor(); };
+  hd.setAttribute('role', 'button'); hd.tabIndex = 0; hd.setAttribute('aria-expanded', S.expanded.has(id));
+  hd.innerHTML = `<span class="t"></span><span class="d"></span><span class="muted">${S.expanded.has(id) ? '▾' : '▸'}</span>`;
+  const paint = () => { hd.querySelector('.t').textContent = title(); hd.querySelector('.d').textContent = date(); };
+  paint(); headers.push(paint);
+  const toggle = () => { S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); renderEditor(); };
+  hd.onclick = toggle;
+  hd.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } };
   c.appendChild(hd);
-  if (S.expanded.has(id)) { const bd = document.createElement('div'); bd.className = 'bd'; build(bd); c.appendChild(bd); }
+  if (S.expanded.has(id)) {
+    const bd = document.createElement('div'); bd.className = 'bd'; build(bd); c.appendChild(bd);
+    if (S.focusNew === id) { S.focusNew = null; setTimeout(() => { const i = bd.querySelector('input'); if (i) { i.focus(); i.select(); } }, 0); }
+  }
   return c;
+}
+const refreshHeaders = () => headers.forEach(f => f());
+
+/* Month + year picker: a month menu plus a 4-digit year you can type (numeric keypad on phones)
+   or nudge with the arrow keys. Saves as soon as the year is complete; "Present" for open-ended homes. */
+function ymField(label, obj, prop, opts = {}) {
+  const w = document.createElement('div'); w.className = 'fld' + (opts.full ? ' full' : '');
+  const lab = document.createElement('span'); lab.textContent = label; w.appendChild(lab);
+  const row = document.createElement('div'); row.className = 'ym';
+  const sel = document.createElement('select'); sel.setAttribute('aria-label', label + ', month');
+  MONTHS.forEach((m, i) => sel.add(new Option(m, String(i + 1).padStart(2, '0'))));
+  const yr = document.createElement('input');
+  Object.assign(yr, { type: 'text', inputMode: 'numeric', maxLength: 4, placeholder: 'YYYY', autocomplete: 'off' });
+  yr.setAttribute('aria-label', label + ', year');
+  const err = document.createElement('div'); err.className = 'err'; err.setAttribute('aria-live', 'polite');
+  const maxY = now.getFullYear() + 1;
+  const fill = () => { const [y, m] = obj[prop] ? String(obj[prop]).split('-') : ['', '01']; yr.value = y || ''; sel.value = (m || '01').padStart(2, '0'); };
+  fill();
+  let present = null;
+  row.append(sel, yr);
+  if (opts.allowPresent) {
+    const l = document.createElement('label'); l.className = 'now';
+    present = document.createElement('input'); present.type = 'checkbox'; present.checked = !obj[prop];
+    l.append(present, 'Present'); row.appendChild(l);
+  }
+  const lock = () => { const off = !!present?.checked; sel.disabled = yr.disabled = off; if (off) { yr.value = ''; } };
+  lock();
+  const save = () => {
+    if (present?.checked) { if (obj[prop] !== '') { obj[prop] = ''; commit(); refreshHeaders(); } err.textContent = ''; return true; }
+    const y = +yr.value;
+    if (!/^\d{4}$/.test(yr.value) || y < 1900 || y > maxY) {
+      yr.classList.add('bad'); err.textContent = `Enter a 4-digit year from 1900 to ${maxY}.`; return false;
+    }
+    yr.classList.remove('bad'); err.textContent = '';
+    const v = `${y}-${sel.value}`;
+    if (v !== obj[prop]) { obj[prop] = v; commit(); refreshHeaders(); }
+    return true;
+  };
+  yr.addEventListener('input', () => {
+    yr.value = yr.value.replace(/\D/g, '').slice(0, 4);
+    if (yr.value.length === 4) save(); else { yr.classList.remove('bad'); err.textContent = ''; }
+  });
+  yr.addEventListener('keydown', e => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const y = Math.min(maxY, Math.max(1900, (+yr.value || now.getFullYear()) + (e.key === 'ArrowUp' ? 1 : -1)));
+      yr.value = y; save();
+    }
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+  });
+  yr.addEventListener('blur', () => { if (yr.value) save(); });
+  yr.addEventListener('focus', () => yr.select());
+  sel.addEventListener('change', () => { if (yr.value) save(); else yr.focus(); });
+  present?.addEventListener('change', () => { lock(); if (!present.checked) { yr.value = now.getFullYear(); sel.value = String(now.getMonth() + 1).padStart(2, '0'); yr.focus(); } save(); });
+  w.append(row, err);
+  return w;
 }
 
 function renderEditor() {
   const E = $('#editor');
   if (E.hidden) return;
   const scroll = E.querySelector('.body')?.scrollTop || 0;
+  headers = [];
   const d = S.data;
   E.innerHTML = `<header><b>Edit data</b><button class="ghost" id="eClose">Done</button></header>
     <div class="tabs">${['profile', 'homes', 'trips', 'moments'].map(t => `<button data-t="${t}" class="${S.etab === t ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div>
@@ -608,14 +732,14 @@ function renderEditor() {
 
   if (S.etab === 'profile') {
     const c = document.createElement('div'); c.className = 'card'; const bd = document.createElement('div'); bd.className = 'bd';
-    bd.append(fld('Name', d.profile, 'name'), fld('Born (year and month)', d.profile, 'birth', { type: 'month' }), fld('Title', d.profile, 'title', { full: true }));
+    bd.append(fld('Name', d.profile, 'name'), ymField('Born', d.profile, 'birth'), fld('Title', d.profile, 'title', { full: true }));
     c.appendChild(bd); body.appendChild(c);
   }
   if (S.etab === 'homes') {
-    body.appendChild(btn('+ Add home', () => { const h = { id: 'h' + Date.now(), city: 'New home', country: '', lat: 0, lng: 0, start: ymStr(NOW_M), end: '', note: '', media: [] }; d.homes.push(h); S.expanded.add(h.id); commit(); renderEditor(); }));
-    [...d.homes].sort((a, b) => ym(a.start) - ym(b.start)).forEach(h => body.appendChild(card(h.id, `${h.city}, ${h.country}`, `${h.start} to ${h.end || 'now'}`, bd => {
+    body.appendChild(btn('+ Add home', () => { const h = { id: 'h' + Date.now(), city: 'New home', country: '', lat: 0, lng: 0, start: ymStr(NOW_M), end: '', note: '', media: [] }; d.homes.push(h); S.expanded.add(h.id); S.focusNew = h.id; commit(); renderEditor(); }));
+    [...d.homes].sort((a, b) => ym(a.start) - ym(b.start)).forEach(h => body.appendChild(card(h.id, () => `${h.city}, ${h.country}`, () => `${h.start ? fmtM(ym(h.start)) : '?'} to ${h.end ? fmtM(ym(h.end)) : 'now'}`, bd => {
       bd.append(fld('City', h, 'city', { rerender: 1 }), fld('Country', h, 'country', { rerender: 1 }),
-        fld('Moved in', h, 'start', { type: 'month', rerender: 1 }), fld('Moved out (blank = now)', h, 'end', { type: 'month', rerender: 1 }));
+        ymField('Moved in', h, 'start'), ymField('Moved out', h, 'end', { allowPresent: true }));
       coordRow(bd, h, () => `${h.city}, ${h.country}`);
       bd.append(fld('Note', h, 'note', { area: 1, full: 1 }),
         fld('Photos and video (one per line: photo | url | caption)', h, 'media', { area: 1, full: 1, get: o => mediaToText(o.media), set: (o, v) => o.media = textToMedia(v) }));
@@ -628,20 +752,20 @@ function renderEditor() {
     const top = document.createElement('div');
     const q = document.createElement('input'); q.className = 'search'; q.placeholder = 'Filter by city, country or year'; q.value = S.efilter;
     q.oninput = () => { S.efilter = q.value; const pos = q.selectionStart; renderEditor(); const nq = $('#editor .search'); nq.focus(); nq.setSelectionRange(pos, pos); };
-    top.append(q, btn('+ Add trip', () => { const t = { id: 't' + Date.now(), city: 'New trip', country: '', lat: 0, lng: 0, start: ymStr(S.t), note: '', places: [] }; d.trips.push(t); S.expanded.add(t.id); S.efilter = ''; commit(); renderEditor(); }));
+    top.append(q, btn('+ Add trip', () => { const t = { id: 't' + Date.now(), city: 'New trip', country: '', lat: 0, lng: 0, start: ymStr(S.t), note: '', places: [] }; d.trips.push(t); S.expanded.add(t.id); S.focusNew = t.id; S.efilter = ''; commit(); renderEditor(); }));
     body.appendChild(top);
     const f = S.efilter.toLowerCase();
     [...d.trips].sort((a, b) => ym(b.start) - ym(a.start))
       .filter(t => !f || `${t.city} ${t.country} ${t.start}`.toLowerCase().includes(f))
-      .forEach(t => body.appendChild(card(t.id, `${t.city}, ${t.country}`, fmtM(ym(t.start)), bd => {
-        bd.append(fld('City', t, 'city', { rerender: 1 }), fld('Country', t, 'country', { rerender: 1 }), fld('When', t, 'start', { type: 'month', rerender: 1 }), document.createElement('span'));
+      .forEach(t => body.appendChild(card(t.id, () => `${t.city}, ${t.country}`, () => fmtM(ym(t.start)), bd => {
+        bd.append(fld('City', t, 'city', { rerender: 1 }), fld('Country', t, 'country', { rerender: 1 }), ymField('When', t, 'start'), document.createElement('span'));
         coordRow(bd, t, () => `${t.city}, ${t.country}`);
         bd.append(fld('Trip note', t, 'note', { area: 1, full: 1 }));
         const sub = document.createElement('div'); sub.className = 'sub-list';
         sub.appendChild(Object.assign(document.createElement('div'), { className: 'fld', textContent: 'Places visited (pins appear when you zoom in)' }));
         (t.places = t.places || []).forEach((p, i) => {
           const pid = t.id + ':' + i;
-          sub.appendChild(card(pid, p.name || 'Place', '', pb => {
+          sub.appendChild(card(pid, () => p.name || 'Place', () => '', pb => {
             pb.append(fld('Name', p, 'name', { full: 1, rerender: 1 }));
             coordRow(pb, p, () => `${p.name}, ${t.city}, ${t.country}`);
             pb.append(fld('Note', p, 'note', { area: 1, full: 1 }),
@@ -651,7 +775,7 @@ function renderEditor() {
             pb.appendChild(r);
           }));
         });
-        sub.appendChild(btn('+ Add place', () => { t.places.push({ name: 'New place', lat: t.lat, lng: t.lng, note: '', media: [] }); S.expanded.add(t.id + ':' + (t.places.length - 1)); commit(); renderEditor(); }));
+        sub.appendChild(btn('+ Add place', () => { t.places.push({ name: 'New place', lat: t.lat, lng: t.lng, note: '', media: [] }); S.expanded.add(t.id + ':' + (t.places.length - 1)); S.focusNew = t.id + ':' + (t.places.length - 1); commit(); renderEditor(); }));
         bd.appendChild(sub);
         const r = document.createElement('div'); r.className = 'full';
         r.appendChild(btn('Delete trip', () => { if (confirm('Delete this trip?')) { d.trips.splice(d.trips.indexOf(t), 1); commit(); renderEditor(); } }, 'sm danger'));
@@ -660,9 +784,9 @@ function renderEditor() {
   }
   if (S.etab === 'moments') {
     d.moments = d.moments || [];
-    body.appendChild(btn('+ Add key moment', () => { const h = D.homeAt(S.t); const m = { id: 'm' + Date.now(), date: ymStr(S.t), title: 'New moment', city: h.city, lat: h.lat, lng: h.lng, note: '' }; d.moments.push(m); S.expanded.add(m.id); commit(); renderEditor(); }));
-    [...d.moments].sort((a, b) => ym(b.date) - ym(a.date)).forEach(m => body.appendChild(card(m.id, m.title, fmtM(ym(m.date)), bd => {
-      bd.append(fld('Title', m, 'title', { full: 1, rerender: 1 }), fld('When', m, 'date', { type: 'month', rerender: 1 }), fld('City', m, 'city'));
+    body.appendChild(btn('+ Add key moment', () => { const h = D.homeAt(S.t); const m = { id: 'm' + Date.now(), date: ymStr(S.t), title: 'New moment', city: h.city, lat: h.lat, lng: h.lng, note: '' }; d.moments.push(m); S.expanded.add(m.id); S.focusNew = m.id; commit(); renderEditor(); }));
+    [...d.moments].sort((a, b) => ym(b.date) - ym(a.date)).forEach(m => body.appendChild(card(m.id, () => m.title, () => fmtM(ym(m.date)), bd => {
+      bd.append(fld('Title', m, 'title', { full: 1, rerender: 1 }), ymField('When', m, 'date'), fld('City', m, 'city'));
       coordRow(bd, m, () => m.city);
       bd.append(fld('Note', m, 'note', { area: 1, full: 1 }));
       const r = document.createElement('div'); r.className = 'full';
@@ -689,6 +813,8 @@ async function init() {
   S.data = local && local.homes ? local : JSON.parse(JSON.stringify(base));
   derive();
   S.t = D.end;
+  const hp = new URLSearchParams(location.hash.slice(1));
+  S.attract = !hp.has('t') && !hp.has('sel') && (!hp.get('mode') || hp.get('mode') === 'map');
   readHash();
   $('#pTitle').value = S.data.profile.title || '';
   renderHeader();
@@ -709,18 +835,61 @@ async function init() {
   $('#editBtn').onclick = () => { $('#editor').hidden = false; renderEditor(); };
   ['#pVisual', '#pSize', '#pTitle'].forEach(s => $(s).addEventListener('input', renderPoster));
   $('#printBtn').onclick = () => window.print();
-  addEventListener('keydown', e => { if (e.code === 'Space' && !/INPUT|TEXTAREA|SELECT|BUTTON/.test(e.target.tagName)) { e.preventDefault(); S.playing ? pause() : play(); } });
+  // first interaction ends the ambient loop and resets to the start
+  document.addEventListener('pointerdown', stopAttract, true);
+  document.addEventListener('keydown', stopAttract, true);
+  addEventListener('keydown', e => {
+    if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || S.mode === 'print' || !$('#editor').hidden) return;
+    if (e.code === 'Space' && e.target.tagName !== 'BUTTON') { e.preventDefault(); S.playing ? pause() : play(); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {   // step a month; Shift steps a year
+      e.preventDefault(); pause();
+      S.t = Math.max(D.birth, Math.min(D.end, S.t + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 12 : 1)));
+      syncTime(); update(); writeHash();
+    }
+  });
+
+  // jump to a year: type it into the readout and press Enter, or nudge with the arrow keys
+  const yj = $('#yearJump');
+  const goYear = y => { pause(); S.t = Math.max(D.birth, Math.min(D.end, y * 12 + (S.t % 12))); syncTime(); update(); writeHash(); };
+  let justFocused = false;
+  const applyYear = () => {
+    if (/^\d{4}$/.test(yj.value)) { goYear(+yj.value); yj.value = Math.floor(S.t / 12); }
+    else { yj.classList.add('bad'); setTimeout(() => { yj.classList.remove('bad'); yj.value = Math.floor(S.t / 12); }, 900); }
+  };
+  yj.addEventListener('focus', () => { pause(); yj.select(); justFocused = true; });
+  yj.addEventListener('mouseup', e => { if (justFocused) { e.preventDefault(); justFocused = false; yj.select(); } });
+  yj.addEventListener('input', () => { yj.value = yj.value.replace(/\D/g, '').slice(0, 4); yj.classList.remove('bad'); });
+  yj.addEventListener('keydown', e => {
+    justFocused = false;
+    if (e.key === 'Enter') { e.preventDefault(); applyYear(); yj.blur(); }
+    else if (e.key === 'Escape') { yj.value = Math.floor(S.t / 12); yj.blur(); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); goYear(Math.floor(S.t / 12) + (e.key === 'ArrowUp' ? 1 : -1)); yj.value = Math.floor(S.t / 12); yj.select(); }
+  });
+  yj.addEventListener('blur', () => { if (yj.value !== String(Math.floor(S.t / 12))) applyYear(); });
 
   let rt;
   const ro = new ResizeObserver(() => { clearTimeout(rt); rt = setTimeout(() => { if (S.mode === 'print') fitPoster(); else { buildMap(true); buildTimeline(true); } }, 80); });
   ro.observe($('#mapWrap')); ro.observe($('#timeline')); ro.observe($('#posterStage'));
 
   setMode(S.mode);
-  if (S.sel && S.mode !== 'print') S.afterBuild = (() => {
-    const o = S.sel.type === 'dest' ? D.dests.find(x => x.key === S.sel.key) : D.homes.find(h => h.id === S.sel.id);
-    const pl = S.sel.place && o.places?.find(p => p.name === S.sel.place);
-    if (S.mode === 'locations' || pl) zoomTo((pl || o).lng, (pl || o).lat, pl ? 400 : 40);
+  if (S.attract) { S.t = D.birth; play(); }
+  const focusSel = () => {
+    if (!S.sel || S.mode === 'print') return;
+    S.afterBuild = () => {
+      const o = S.sel?.type === 'dest' ? D.dests.find(x => x.key === S.sel.key) : D.homes.find(h => h.id === S.sel?.id);
+      if (!o) return;
+      const pl = S.sel.place && o.places?.find(p => p.name === S.sel.place);
+      if (S.mode === 'locations' || pl) zoomTo((pl || o).lng, (pl || o).lat, pl ? 400 : 40);
+    };
+  };
+  focusSel();
+  // a deep link pasted into the same tab only changes the hash: apply it without a reload
+  addEventListener('hashchange', () => {
+    S.attract = false; if (S.playing) pause(); clearFlights();
+    S.sel = null; S.t = D.end; S.zt = d3.zoomIdentity;
+    readHash(); syncTime(); setMode(S.mode); focusSel();
   });
 }
+window.__pushlife = { S, get D() { return D; } };   // read-only hook for QA scripts
 init().catch(err => { console.error(err); document.body.insertAdjacentHTML('beforeend', `<p style="padding:20px">Could not load the map data. ${esc(err.message)}</p>`); });
 })();

@@ -17,8 +17,8 @@
       <div class="sub" id="subtitle"></div>
     </div>
     <nav class="modes" role="tablist">
-      <button data-mode="timeline" role="tab">Timeline</button>
       <button data-mode="map" role="tab">Map</button>
+      <button data-mode="timeline" role="tab">Timeline</button>
       <button data-mode="locations" role="tab">Locations</button>
       <button data-mode="print" role="tab">Print</button>
     </nav>
@@ -46,6 +46,9 @@
   <footer id="timeWrap">
     <div class="transport">
       <button id="playBtn" class="play" aria-label="Play">▶</button>
+      <div class="when"><span id="rdMonth"></span>
+        <input id="yearJump" type="text" inputmode="numeric" maxlength="4" autocomplete="off" spellcheck="false" aria-label="Year. Type a year and press Enter to jump there" title="Type a year and press Enter. Arrow keys step through years.">
+      </div>
       <div class="readout" id="readout"></div>
     </div>
     <svg id="timeline"></svg>

@@ -54,6 +54,8 @@ main{flex:1;display:flex;min-height:0;position:relative;margin:0 12px;border-rad
 .moment{fill:var(--ink);cursor:pointer}
 .you .halo{fill:var(--accent);opacity:.35;filter:url(#glow)}
 .you .core{fill:var(--accent);stroke:var(--panel);stroke-width:1.5px;vector-effect:non-scaling-stroke}
+.comet .halo{fill:var(--accent);opacity:.45;filter:url(#glow);pointer-events:none}
+.comet .core{stroke:var(--panel);stroke-width:1px;vector-effect:non-scaling-stroke;pointer-events:none}
 .flash{fill:none;stroke:var(--accent);vector-effect:non-scaling-stroke;pointer-events:none}
 .layer-places{display:none}
 .zoomed .layer-places{display:inline}
@@ -76,7 +78,7 @@ main{flex:1;display:flex;min-height:0;position:relative;margin:0 12px;border-rad
 .pl{border-top:1px solid var(--line);padding:12px 0}
 .pl.hl{background:#F1EEE7;margin:0 -18px;padding:12px 18px}
 .pl .n{font-weight:500;cursor:pointer}
-.pl p{margin:4px 0 8px;color:var(--ink2)}
+.pl p{margin:4px 0 8px;color:var(--ink2);white-space:pre-line}
 .media{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 .media .ph{aspect-ratio:1;border-radius:6px;background:repeating-linear-gradient(45deg,#ECE9E2 0 6px,#E5E1D9 6px 12px);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink2);text-align:center;padding:4px}
 .media img,.media video,.media iframe{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;border:0;background:#E5E1D9}
@@ -86,6 +88,12 @@ main{flex:1;display:flex;min-height:0;position:relative;margin:0 12px;border-rad
 .transport{display:flex;align-items:center;gap:12px;padding:0 8px 4px}
 .play{width:34px;height:34px;border-radius:50%;border:0;background:var(--ink);color:var(--panel);font-size:12px}
 .readout{color:var(--ink2);font-size:12px}
+.when{display:flex;align-items:baseline;gap:6px;font-weight:500;font-variant-numeric:tabular-nums}
+#rdMonth{min-width:2.2em;color:var(--ink2)}
+#yearJump{width:4.2ch;border:0;border-bottom:1px dashed var(--ink3);background:transparent;padding:0 1px;font-weight:500;font-size:15px;font-variant-numeric:tabular-nums;color:var(--ink);outline:none;text-align:left;cursor:text}
+#yearJump:hover{border-bottom-color:var(--ink2)}
+#yearJump:focus{border-bottom:1px solid var(--accent)}
+#yearJump.bad,.ym input.bad{border-color:#C0634A!important;color:#C0634A}
 .readout b{color:var(--ink);font-weight:500}
 #timeline{width:100%;height:96px;display:block;cursor:pointer;touch-action:none}
 body.m-timeline #timeline{height:240px}
@@ -142,6 +150,12 @@ body.m-timeline #timeline{height:240px}
 .fld{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--ink2)}
 .fld input,.fld textarea{border:1px solid var(--line);border-radius:6px;padding:6px 7px;font-size:13px;color:var(--ink);background:#fff;width:100%}
 .fld textarea{min-height:52px;resize:vertical}
+.ym{display:flex;gap:6px;align-items:center}
+.ym select{border:1px solid var(--line);border-radius:6px;padding:6px 4px;font-size:13px;background:#fff;color:var(--ink);flex:1 1 auto;min-width:0}
+.ym input[type=text]{width:5.2em;flex:none;font-variant-numeric:tabular-nums}
+.ym .now{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink2);white-space:nowrap}
+.ym .now input{width:auto}
+.fld .err{color:#C0634A;font-size:11px;min-height:0}
 .sm{border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 9px;font-size:12px;color:var(--ink2)}
 .sm.danger{color:#A0503A}
 .sub-list{grid-column:1/-1;border-top:1px dashed var(--line);padding-top:8px}
