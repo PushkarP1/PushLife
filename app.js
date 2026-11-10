@@ -34,6 +34,8 @@ const bowArc = (pr, a, b) => {
 };
 const geoLine = (a, b) => ({ type: 'LineString', coordinates: [[+a.lng, +a.lat], [+b.lng, +b.lat]] });
 
+const ATTRACT_YEAR = 1990; // ambient loop starts and restarts here
+const attractStart = () => Math.max(D.birth, Math.min(D.end, ATTRACT_YEAR * 12));
 const S = { data: null, base: null, mode: 'map', theme: 'night', t: NOW_M, attract: false, tf: NOW_M, hold: 0, playing: false, sel: null, visit: 0,
             k: 1, zt: d3.zoomIdentity, land: null, expanded: new Set(), etab: 'trips', efilter: '' };
 let D = null;
@@ -377,7 +379,7 @@ function stepTime(dt) {
   if (S.t >= D.end) {
     if (!S.attract) { if (!flights.length) pause(); return; }
     S.hold += dt;
-    if (S.hold >= LOOP_HOLD) { clearFlights(); S.t = D.birth; syncTime(); update(); }
+    if (S.hold >= LOOP_HOLD) { clearFlights(); S.t = attractStart(); syncTime(); update(); }
     return;
   }
   const prev = S.t;
@@ -989,7 +991,7 @@ async function init() {
   ro.observe($('#mapWrap')); ro.observe($('#timeline')); ro.observe($('#posterStage'));
 
   setMode(S.mode);
-  if (S.attract) { S.t = D.birth; play(); }
+  if (S.attract) { S.t = attractStart(); play(); }
   const focusSel = () => {
     if (!S.sel || S.mode === 'print') return;
     S.afterBuild = () => {
